@@ -21,9 +21,9 @@ The final project involved building a recommendation system that suggests simila
 
 ## 🛠️ Tools & Libraries
 
-Python (pandas, scikit-learn, spaCy, BERTopic, BeautifulSoup, requests)
-Streamlit (for web app deployment)
-Jupyter Notebooks & GitHub for version control
+- Python (pandas, scikit-learn, spaCy, BERTopic, BeautifulSoup, requests)
+- Streamlit (for web app deployment)
+- Jupyter Notebooks & GitHub for version control
 
 
 
