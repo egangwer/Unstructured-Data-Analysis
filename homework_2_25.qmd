@@ -1,0 +1,162 @@
+---
+title: "Homework 2"
+author: "Elisabeth Gangwer"
+format:
+  html:
+    toc: true
+    toc-location: left
+    self-contained: true
+jupyter: python3
+---
+
+## Task 1
+
+We are going to return to the table of the top 100 wrestlers: https://www.cagematch.net/?id=2&view=statistics. Specifically, you are going to get the ratings/comments tables for each wrestler.
+
+```{python}
+from bs4 import BeautifulSoup
+import pandas as pd
+import re
+import requests
+
+
+link = ("https://www.cagematch.net/?id=2&view=statistics")
+wrestler = requests.get(link)
+wrestler_soup = BeautifulSoup(wrestler.content, "html.parser")
+
+top100_links = wrestler_soup.select('a[href*="?id=2&nr"]')
+top100_links = re.sub('amp;', '', str(top100_links))
+top100_links = re.findall(r'(?<=href=").*?(?=")', (top100_links))
+
+id_nr = re.findall(r'(?<=nr=)\d*', str(top100_links))
+
+# Create a function to determine the number of pages for each wrestler
+def grab(id): 
+  id = f"{id}"
+  wrestler_link = f"https://www.cagematch.net/?id=2&nr={id}&page=98&s=0"
+  stats = requests.get(wrestler_link)
+  navigation_soup = BeautifulSoup(stats.content, "html.parser")
+  navigation = navigation_soup.select('div .NavigationPartPage')
+  last_page = navigation[-1]
+  last_page = re.findall(r's=(\d+)', str(last_page))
+  last_page = int(last_page[0])
+  page_range = list(range(0, last_page+1, 100))
+  return page_range
+
+test_rock = grab(960)
+
+# Create a function to grab the comments for each wrestler by page
+def wrestler_comments(id, page): 
+  id = f"{id}"
+  page_num = f"{page}"
+  wrestler_link = f"https://www.cagematch.net/?id=2&nr={id}&page=98&s={page_num}"
+  stats = requests.get(wrestler_link)
+  comments_soup = BeautifulSoup(stats.content, "html.parser")
+  content = comments_soup.select('tr')[1: ]
+  wrestler_name = comments_soup.select('h1')[0].text
+  return content, wrestler_name
+
+wrestler_data = wrestler_comments(360, 100)
+
+comment_data = [ ]
+for x in id_nr: 
+  grab_page = grab(x)
+  for i in grab_page: 
+    comments = wrestler_comments(x, i)
+    for i in comments[0]: 
+      cols = i.select('td') 
+      data = {
+        'review_number': cols[0].text.strip(),
+        'date_reviewed': cols[1].text.strip(),
+        'user': cols[2].text.strip(),
+        'rating': cols[3].text.strip(), 
+        'comment': cols[4].text.strip()
+      }
+      for y in comments: 
+        wrestler_name = comments[1]
+        data['wrestler_name'] = wrestler_name
+      comment_data.append(data)
+
+review_comments = pd.DataFrame(comment_data)
+print(review_comments)
+``` 
+
+
+```{python}
+from langdetect import detect, LangDetectException
+
+review_comments['comment'] = review_comments['comment'].replace({'': 'N/A', ' ': 'N/A'})
+review_comments['rating'] = pd.to_numeric(review_comments['rating'], errors='coerce')
+
+# Filter out non-English comments
+def language(text):
+  try:
+      language = detect(text)
+      return language  
+  except LangDetectException:
+      return "unknown"
+
+review_comments['language'] = review_comments['comment'].apply(language)
+
+clean_comments = pd.DataFrame(review_comments[(review_comments['language'] == 'en')])
+
+print(clean_comments) 
+```
+
+## Task 2
+
+Perform any form of sentiment analysis. What is the relationship between a reviewer's sentiment and their rating?
+
+```{python}
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+vader = SentimentIntensityAnalyzer()
+
+def sent_score(comment):
+  sent_score = vader.polarity_scores(comment).get('compound')
+  sent_score = pd.to_numeric(sent_score)
+  return sent_score
+
+clean_comments['sent_score'] = clean_comments['comment'].apply(sent_score)
+
+# Sentiment positive, negative, neutral 
+clean_comments['sent_label'] = clean_comments['sent_score'].apply(lambda x: 'positive' if x > 0.5 else ('negative' if x < -0.5 else 'neutral'))
+print(clean_comments)
+
+corr = round(clean_comments['rating'].corr(clean_comments['sent_score']), 3)
+print(f"The correlation between the sentiment score and rating of a wrestler is {corr}")
+
+```
+
+```{python}
+from plotnine import *
+ggplot(clean_comments, aes(x='rating', y='sent_score')) + geom_point() + labs(title='Sentiment Analysis of Comments and Ratings', x='Rating', y='Sentiment Score')
+```
+
+The correlation between the sentiment score and rating of a wrestler is 0.289, indicating a weak positive relationship between the two. With a weak positive correlation, we can see that the sentiment of comments does not contribute significantly to their personal rating of the wrestler.
+
+## Task 3
+
+Perform any type of topic modeling on the comments. What are the main topics of the comments? How can you use those topics to understand what people value?
+
+```{python}
+from bertopic import BERTopic
+from bertopic.vectorizers import ClassTfidfTransformer
+from joblib import load, dump
+
+ctfidf_model = ClassTfidfTransformer(
+  reduce_frequent_words=True
+)
+topic_model = BERTopic(ctfidf_model=ctfidf_model)
+
+topics, probs = topic_model.fit_transform(clean_comments['comment'].to_list())
+
+dump(
+  [topic_model, topics, probs], 
+  '/Users/elisabethgangwer/Desktop/unstructured/homework_2/topic_model.joblib'
+)
+
+topic_model.get_topic_info()
+topic_model.get_topic_info().head(6)
+```
+
+Using the BERTopic model, we can see that the main topic of the comments is about Japanese wrestling 'japanese_sasuke_njpw_japan', with a count of 264. This suggests that people value Japanese wrestling and wrestlers, showing that there is a strong interest in this topic. The second most popular topic is about Chris Jericho 'jericho_chris_jerichos_y2j', with a count of 224, indicating that people value his wrestling style and personality. The third most popular topic is about women wrestlers 'shes_she_her_female', with a count of 222. With the model highlighting distinct topics for male wrestlers, such as Chris Jericho and The Undertaker, and women wrestlers being grouped under a broader category, it suggests that there may be a gap in representation within the wrestling community while also highlighting the recognition and appreciation for women wrestlers. These insights highlight the key interests of the audience, emphasizing the strong appreciation for Japanese wrestling, Chris Jericho, and women wrestlers. 
